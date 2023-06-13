@@ -89,7 +89,7 @@ func GetOptimisticBucketPath(url string, method string) string {
 	// ! stands for any replaceable id
 	switch parts[0] {
 	case MajorChannels:
-		if numParts == 2 {
+		if numParts == 2 && method != "PATCH" {
 			// Return the same bucket for all reqs to /channels/id
 			// In this case, the discord bucket is the same regardless of the id
 			bucket.WriteString(MajorChannels)
