@@ -3,15 +3,16 @@ package lib
 import (
 	"context"
 	"errors"
-	"github.com/Clever/leakybucket"
-	"github.com/Clever/leakybucket/memory"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Clever/leakybucket"
+	"github.com/Clever/leakybucket/memory"
+	"github.com/sirupsen/logrus"
 )
 
 type QueueItem struct {
@@ -376,6 +377,12 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		if resp.StatusCode == 429 && scope == "shared" && (path == "/channels/!/messages/!/reactions/!modify" || path == "/channels/!/messages/!/reactions/!/!") {
 			prevRem, prevReset = remaining, resetAfter
 			continue
+		}
+
+		// Prevent a weird rate limit issue with reaction modify
+		// Based on eris code, we should sleep 250ms on this endpoint
+		if strings.HasSuffix(path, "/reactions/!modify") {
+			time.Sleep(250 * time.Millisecond)
 		}
 
 		if remaining == 0 || resp.StatusCode == 429 {
