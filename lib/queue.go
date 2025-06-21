@@ -22,12 +22,15 @@ type QueueItem struct {
 }
 
 type QueueChannel struct {
-	ch       chan *QueueItem
-	lastUsed time.Time
+	sync.RWMutex
+	ch        chan *QueueItem
+	lastUsed  time.Time
+	ratelimit *BucketRateLimit
+	lockerFun func(item *QueueItem)
 }
 
 type RequestQueue struct {
-	sync.RWMutex
+	sync.Mutex
 	globalLockedUntil *int64
 	// bucket path hash as key
 	queues       map[uint64]*QueueChannel
@@ -185,8 +188,9 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	ch, ok := q.queues[pathHash]
 	if !ok {
 		ch = &QueueChannel{
-			ch:       make(chan *QueueItem, q.bufferSize),
-			lastUsed: t,
+			ch:        make(chan *QueueItem, q.bufferSize),
+			lastUsed:  t,
+			ratelimit: nil,
 		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel
@@ -197,54 +201,52 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	return ch
 }
 
-func parseHeaders(headers *http.Header, preferRetryAfter bool) (int64, int64, time.Duration, bool, error) {
+func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64, string, error) {
 	if headers == nil {
-		return 0, 0, 0, false, errors.New("null headers")
+		return "", 0, 0, 0, 0, "", errors.New("null headers")
 	}
 
+	bucket := headers.Get("x-ratelimit-bucket")
 	limit := headers.Get("x-ratelimit-limit")
 	remaining := headers.Get("x-ratelimit-remaining")
+	resetAt := headers.Get("x-ratelimit-reset")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
-	retryAfter := headers.Get("retry-after")
-	if resetAfter == "" || (preferRetryAfter && retryAfter != "") {
-		// Globals return no x-ratelimit-reset-after headers, shared ratelimits have a wrong reset-after
-		// this is the best option without parsing the body
-		resetAfter = headers.Get("retry-after")
+	scope := headers.Get("x-ratelimit-global")
+	if scope == "" {
+		scope = "route"
 	}
-	isGlobal := headers.Get("x-ratelimit-global") == "true"
 
-	var resetParsed float64
-	var reset time.Duration = 0
 	var err error
-	if resetAfter != "" {
-		resetParsed, err = strconv.ParseFloat(resetAfter, 64)
-		if err != nil {
-			return 0, 0, 0, false, err
-		}
 
-		// Convert to MS instead of seconds to preserve decimal precision
-		reset = time.Duration(int(resetParsed*1000)) * time.Millisecond
+	resetAfterParsed, err := strconv.ParseFloat(resetAfter, 64)
+	if err != nil {
+		return "", 0, 0, 0, 0, "", err
 	}
 
-	if isGlobal {
-		return 0, 0, reset, isGlobal, nil
+	if scope == "global" {
+		return bucket, 0, 0, resetAfterParsed, 0, scope, nil
 	}
 
 	if limit == "" {
-		return 0, 0, reset, false, nil
+		return "", 0, 0, resetAfterParsed, 0, scope, nil
 	}
 
 	limitParsed, err := strconv.ParseInt(limit, 10, 32)
 	if err != nil {
-		return 0, 0, 0, false, err
+		return "", 0, 0, 0, 0, "", err
 	}
 
 	remainingParsed, err := strconv.ParseInt(remaining, 10, 32)
 	if err != nil {
-		return 0, 0, 0, false, err
+		return "", 0, 0, 0, 0, "", err
 	}
 
-	return limitParsed, remainingParsed, reset, isGlobal, nil
+	resetAtParsed, err := strconv.ParseFloat(resetAt, 64)
+	if err != nil {
+		return "", 0, 0, 0, 0, "", err
+	}
+
+	return bucket, remainingParsed, limitParsed, resetAfterParsed, resetAtParsed, scope, nil
 }
 
 func return404webhook(item *QueueItem) {
@@ -254,10 +256,9 @@ func return404webhook(item *QueueItem) {
 	_, err := res.Write([]byte(body))
 	if err != nil {
 		item.errChan <- err
-		return
+	} else {
+		item.doneChan <- nil
 	}
-	item.doneChan <- nil
-
 }
 
 func return401(item *QueueItem) {
@@ -282,106 +283,121 @@ func isInteraction(url string) bool {
 	return false
 }
 
+func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *QueueChannel, path string, pathHash uint64) {
+	resp, err := q.processor(ctx, item)
+	if err != nil {
+		item.errChan <- err
+		return
+	}
+
+	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
+	if err != nil {
+		item.errChan <- err
+		return
+	}
+
+	// FIXME: Properly implement this like in hikari
+	if scope == "global" {
+		//Lock global
+		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, int64(resetAt))
+		if sw {
+			logger.WithFields(logrus.Fields{
+				"until":      int64(resetAt),
+				"resetAfter": resetAfter,
+			}).Warn("Global reached, locking")
+		}
+	}
+
+	if bucket != "" {
+		if ch.ratelimit == nil {
+			ch.Lock()
+			if ch.ratelimit == nil {
+				logger.WithFields(logrus.Fields{"path": path, "bucket": bucket}).Info("New ratelimit")
+				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, path, q.user.Id)
+			}
+			ch.Unlock()
+		} else {
+			ch.ratelimit.Update(remaining, limit, resetAt, resetAfter)
+		}
+	}
+
+	// FIXME: Consider handling special retry case for POST /users/@me/channels
+
+	item.doneChan <- resp
+
+	if resp.StatusCode == 429 && scope != "shared" {
+		logger.WithFields(logrus.Fields{
+			"remaining":  remaining,
+			"resetAfter": resetAfter,
+			"bucket":     path,
+			"route":      item.Req.URL.String(),
+			"method":     item.Req.Method,
+			"scope":      scope,
+			"pathHash":   pathHash,
+			// TODO: Remove this when 429s are not a problem anymore
+			"discordBucket":  resp.Header.Get("x-ratelimit-bucket"),
+			"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
+		}).Warn("Unexpected 429")
+	}
+
+	if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
+		logger.WithFields(logrus.Fields{
+			"bucket": path,
+			"route":  item.Req.URL.String(),
+			"method": item.Req.Method,
+		}).Info("Setting fail fast 404 for webhook")
+
+		ch.Lock()
+		ch.lockerFun = return404webhook
+		ch.Unlock()
+	}
+
+	if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
+		// Permanently lock this queue
+		logger.WithFields(logrus.Fields{
+			"bucket":     path,
+			"route":      item.Req.URL.String(),
+			"method":     item.Req.Method,
+			"identifier": q.identifier,
+			"status":     resp.StatusCode,
+		}).Error("Received 401 during normal operation, assuming token is invalidated, locking bucket permanently")
+
+		if EnvGet("DISABLE_401_LOCK", "false") != "true" {
+			atomic.StoreInt64(q.isTokenInvalid, 999)
+		}
+	}
+}
+
 func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
 
-	//Only used for logging
-	var prevRem int64 = 0
-	var prevReset time.Duration = 0
-
-	// Fail fast path for webhook 404s
-	var ret404 = false
 	for item := range ch.ch {
 		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
-		if ret404 {
-			return404webhook(item)
-			continue
-		}
 
 		if atomic.LoadInt64(q.isTokenInvalid) > 0 {
 			return401(item)
 			continue
 		}
 
-		resp, err := q.processor(ctx, item)
-		if err != nil {
-			item.errChan <- err
+		if ch.lockerFun != nil {
+			ch.lockerFun(item)
 			continue
 		}
 
-		scope := resp.Header.Get("x-ratelimit-scope")
+		if ch.ratelimit != nil {
+			ch.ratelimit.Acquire(ctx)
 
-		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header, scope != "user")
+			go item.doRequest(ctx, q, ch, path, pathHash)
 
-		if isGlobal {
-			//Lock global
-			sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, time.Now().Add(resetAfter).UnixNano())
-			if sw {
-				logger.WithFields(logrus.Fields{
-					"until":      time.Now().Add(resetAfter),
-					"resetAfter": resetAfter,
-				}).Warn("Global reached, locking")
-			}
+		} else {
+			// We don't have the initial headers, so we do the requests sequentially, which should
+			// create and populate the bucket when it's known.
+			// If this is a route with no ratelimits, then we will simply execute them all sequentially,
+			// which should be fine
+			//
+			// TODO: Consider if its worth hard coding which routes will never have a bucket
+			item.doRequest(ctx, q, ch, path, pathHash)
 		}
-
-		if err != nil {
-			item.errChan <- err
-			continue
-		}
-		item.doneChan <- resp
-
-		if resp.StatusCode == 429 && scope != "shared" {
-			logger.WithFields(logrus.Fields{
-				"prevRemaining":  prevRem,
-				"prevResetAfter": prevReset,
-				"remaining":      remaining,
-				"resetAfter":     resetAfter,
-				"bucket":         path,
-				"route":          item.Req.URL.String(),
-				"method":         item.Req.Method,
-				"isGlobal":       isGlobal,
-				"pathHash":       pathHash,
-				// TODO: Remove this when 429s are not a problem anymore
-				"discordBucket":  resp.Header.Get("x-ratelimit-bucket"),
-				"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
-			}).Warn("Unexpected 429")
-		}
-
-		if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
-			logger.WithFields(logrus.Fields{
-				"bucket": path,
-				"route":  item.Req.URL.String(),
-				"method": item.Req.Method,
-			}).Info("Setting fail fast 404 for webhook")
-			ret404 = true
-		}
-
-		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
-			// Permanently lock this queue
-			logger.WithFields(logrus.Fields{
-				"bucket":     path,
-				"route":      item.Req.URL.String(),
-				"method":     item.Req.Method,
-				"identifier": q.identifier,
-				"status":     resp.StatusCode,
-			}).Error("Received 401 during normal operation, assuming token is invalidated, locking bucket permanently")
-
-			if EnvGet("DISABLE_401_LOCK", "false") != "true" {
-				atomic.StoreInt64(q.isTokenInvalid, 999)
-			}
-		}
-
-		// Prevent reaction bucket from being stuck
-		if resp.StatusCode == 429 && scope == "shared" && (path == "/channels/!/messages/!/reactions/!modify" || path == "/channels/!/messages/!/reactions/!/!") {
-			prevRem, prevReset = remaining, resetAfter
-			continue
-		}
-
-		if remaining == 0 || resp.StatusCode == 429 {
-			duration := time.Until(time.Now().Add(resetAfter))
-			time.Sleep(duration)
-		}
-		prevRem, prevReset = remaining, resetAfter
 	}
 }

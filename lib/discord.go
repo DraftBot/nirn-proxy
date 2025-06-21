@@ -7,7 +7,6 @@ import (
 	"errors"
 	"github.com/sirupsen/logrus"
 	"io"
-	"io/ioutil"
 	"math"
 	"net"
 	"net/http"
@@ -88,7 +87,7 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 }
 
 func parseGlobalOverrides(overrides string) {
-	// Format: "<bot_id>:<bot_global_limit>,<bot_id>:<bot_global_limit>
+	// Format: "<bot_id>:<bot_global_limit>,<bot_id>:<bot_global_limit>"
 
 	if overrides == "" {
 		return
@@ -161,7 +160,7 @@ func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 		return 0, errors.New("500 on gateway/bot")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body, _ := io.ReadAll(bot.Body)
 
 	var s BotGatewayResponse
 
@@ -200,7 +199,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 		return nil, errors.New("500 on users/@me")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body, _ := io.ReadAll(bot.Body)
 
 	var s BotUserResponse
 
@@ -254,7 +253,7 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			res.WriteHeader(408)
 		} else {
 			res.WriteHeader(500)

@@ -108,7 +108,7 @@ func main() {
 		go lib.StartMetrics(bindIp + ":" + port)
 	}
 
-	done := make(chan os.Signal, 1)
+	done := make(chan os.Signal)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
