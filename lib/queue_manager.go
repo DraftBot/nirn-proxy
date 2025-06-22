@@ -334,7 +334,10 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		if err != nil {
 			log := logEntry.WithField("function", "Queue")
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				log.WithField("waitedFor", time.Since(reqStart)).Warn(err)
+				log.WithFields(logrus.Fields{
+					"waitedFor": time.Since(reqStart),
+					"path":      req.URL.Path,
+				}).Warn(err)
 			} else {
 				log.Error(err)
 			}
