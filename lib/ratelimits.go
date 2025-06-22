@@ -98,7 +98,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 				"bucket":        b.bucket,
 				"user":          b.userID,
 				"sleepDuration": sleepDuration,
-			}).Info("backing off to avoid hitting ratelimits")
+			}).Debug("backing off to avoid hitting ratelimits")
 
 			// FIXME: This doesn't work and idk why
 			select {

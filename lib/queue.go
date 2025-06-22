@@ -312,7 +312,6 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		if ch.ratelimit == nil {
 			ch.Lock()
 			if ch.ratelimit == nil {
-				logger.WithFields(logrus.Fields{"path": path, "bucket": bucket}).Info("New ratelimit")
 				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, path, q.user.Id)
 			}
 			ch.Unlock()
