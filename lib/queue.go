@@ -24,7 +24,7 @@ type QueueItem struct {
 }
 
 type QueueChannel struct {
-	sync.RWMutex
+	sync.Mutex
 	ch        chan *QueueItem
 	lastUsed  time.Time
 	ratelimit *BucketRateLimit
