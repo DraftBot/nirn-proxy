@@ -28,6 +28,7 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 // BucketRateLimit is a sliding window ratelimit implementation
 type BucketRateLimit struct {
 	userID     string
+	path       string
 	bucket     string
 	lock       sync.Mutex
 	remaining  int64
@@ -37,7 +38,7 @@ type BucketRateLimit struct {
 	outOfSync  bool
 }
 
-func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, userID string) *BucketRateLimit {
+func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, userID string) *BucketRateLimit {
 	if remaining == limit {
 		// If we somehow get this case, then we cannot create a ratelimit from the info
 		return nil
@@ -47,6 +48,7 @@ func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, buc
 
 	return &BucketRateLimit{
 		bucket:     bucket,
+		path:       path,
 		userID:     userID,
 		remaining:  remaining,
 		limit:      limit,
@@ -96,6 +98,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 		if sleepDuration > 0 {
 			logger.WithFields(logrus.Fields{
 				"bucket":        b.bucket,
+				"path":          b.path,
 				"user":          b.userID,
 				"sleepDuration": sleepDuration,
 			}).Debug("backing off to avoid hitting ratelimits")
@@ -133,6 +136,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 		if b.limit > limit {
 			logger.WithFields(logrus.Fields{
 				"bucket":   b.bucket,
+				"path":     b.path,
 				"user":     b.userID,
 				"newLimit": limit,
 				"oldLimit": b.limit,
@@ -152,6 +156,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 		if !isClose(slidePeriod, b.period, 0.5) {
 			logger.WithFields(logrus.Fields{
 				"bucket":         b.bucket,
+				"path":           b.path,
 				"user":           b.userID,
 				"newSlidePeriod": slidePeriod,
 				"oldSlidePeriod": b.period,

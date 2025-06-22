@@ -312,7 +312,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		if ch.ratelimit == nil {
 			ch.Lock()
 			if ch.ratelimit == nil {
-				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, path, q.user.Id)
+				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, bucket, path, q.user.Id)
 			}
 			ch.Unlock()
 		} else {
