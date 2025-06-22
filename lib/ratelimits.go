@@ -64,9 +64,6 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	// The second part of this 'if' is to account for some cases where there can be a race
 	// condition and we receive rate limit updates out of order, and we cannot update `outOfSync`
 	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
-		if b.outOfSync && now.Sub(b.increaseAt) > b.period {
-			logrus.Info("healing")
-		}
 		// We can slide the window along
 		gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
 		nowRemaining := b.remaining + gain
