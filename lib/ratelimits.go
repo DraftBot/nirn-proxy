@@ -82,7 +82,7 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 }
 
 // Acquire will request a slot from the ratelimit and sleep until there is one available
-func (b *BucketRateLimit) Acquire(ctx context.Context) {
+func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -104,13 +104,14 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				logger.Info("context cancelled")
-				return
+				return ctx.Err()
 			case <-time.After(sleepDuration):
 			}
 		}
 	}
 
 	b.remaining--
+	return nil
 }
 
 func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter float64) {

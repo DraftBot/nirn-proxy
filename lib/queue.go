@@ -386,7 +386,10 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 
 		if ch.ratelimit != nil {
-			ch.ratelimit.Acquire(ctx)
+			if err := ch.ratelimit.Acquire(ctx); err != nil {
+				item.errChan <- err
+				continue
+			}
 
 			go item.doRequest(ctx, q, ch, path, pathHash)
 
