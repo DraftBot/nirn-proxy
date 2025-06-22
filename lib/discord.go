@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -213,7 +214,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 	return &s, nil
 }
 
-func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
+func doDiscordReq(ctx context.Context, path string, method string, body io.Reader, header http.Header, query string) (*http.Response, error) {
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	if err != nil {
 		return nil, err
@@ -252,7 +253,7 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 
 	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
 	defer cancel()
-	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
+	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, bytes.NewReader(item.ReqBody), req.Header.Clone(), req.URL.RawQuery)
 
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

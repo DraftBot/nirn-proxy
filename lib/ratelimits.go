@@ -103,7 +103,6 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 				"sleepDuration": sleepDuration,
 			}).Debug("backing off to avoid hitting ratelimits")
 
-			// FIXME: This doesn't work and idk why
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

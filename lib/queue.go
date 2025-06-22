@@ -6,6 +6,7 @@ import (
 	"github.com/Clever/leakybucket"
 	"github.com/Clever/leakybucket/memory"
 	"github.com/sirupsen/logrus"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 type QueueItem struct {
 	Req      *http.Request
 	Res      *http.ResponseWriter
+	ReqBody  []byte
 	doneChan chan *http.Response
 	errChan  chan error
 }
@@ -171,7 +173,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 
-	safeSend(ch, &QueueItem{req, res, doneChan, errChan})
+	safeSend(ch, &QueueItem{req, res, nil, doneChan, errChan})
 
 	select {
 	case <-doneChan:
@@ -392,6 +394,16 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 		if ch.lockerFun != nil {
 			ch.lockerFun(item)
+			continue
+		}
+
+		// This is unfortunate, but we need to read the body here so that the ctx gets closed properly
+		// when the client disconnects, which is very useful for cancelling `ratelimit.Acquire` early
+		// see: https://github.com/golang/go/issues/23262
+		var err error
+		item.ReqBody, err = io.ReadAll(item.Req.Body)
+		if err != nil {
+			item.errChan <- err
 			continue
 		}
 
