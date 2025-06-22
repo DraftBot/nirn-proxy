@@ -296,17 +296,8 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		return
 	}
 
-	// FIXME: Properly implement this like in hikari
-	if scope == "global" {
-		//Lock global
-		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, int64(resetAt))
-		if sw {
-			logger.WithFields(logrus.Fields{
-				"until":      int64(resetAt),
-				"resetAfter": resetAfter,
-			}).Warn("Global reached, locking")
-		}
-	}
+	// TODO: Consider handling special retry case for POST /users/@me/channels
+	item.doneChan <- resp
 
 	if bucket != "" {
 		if ch.ratelimit == nil {
@@ -320,9 +311,17 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		}
 	}
 
-	// FIXME: Consider handling special retry case for POST /users/@me/channels
-
-	item.doneChan <- resp
+	// FIXME: Properly implement this like in hikari
+	if scope == "global" {
+		//Lock global
+		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, int64(resetAt))
+		if sw {
+			logger.WithFields(logrus.Fields{
+				"until":      int64(resetAt),
+				"resetAfter": resetAfter,
+			}).Warn("Global reached, locking")
+		}
+	}
 
 	if resp.StatusCode == 429 && scope != "shared" {
 		logger.WithFields(logrus.Fields{
@@ -397,7 +396,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		// which should be fine
 		//
 		// TODO: Consider if its worth hard coding which routes will never have a bucket
-		if ch.ratelimit == nil || disableRestLimitDetection {
+		if ch.ratelimit == nil || !allowConcurrentRequests {
 			item.doRequest(ctx, q, ch, path, pathHash)
 		} else {
 			go item.doRequest(ctx, q, ch, path, pathHash)
