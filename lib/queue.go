@@ -211,9 +211,16 @@ func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64,
 	remaining := headers.Get("x-ratelimit-remaining")
 	resetAt := headers.Get("x-ratelimit-reset")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
+	retryAfter := headers.Get("retry-after")
 	scope := headers.Get("x-ratelimit-global")
 	if scope == "" {
 		scope = "route"
+	}
+
+	if resetAfter == "" || (scope == "global" && retryAfter != "") {
+		// Globals return no x-ratelimit-reset-after headers, shared ratelimits have a wrong reset-after
+		// this is the best option without parsing the body
+		resetAfter = headers.Get("retry-after")
 	}
 
 	var err error
@@ -291,6 +298,19 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 	}
 
 	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
+
+	if scope == "global" {
+		// Lock global
+		resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
+		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, time.Now().Add(resetAfterDuration).UnixNano())
+		if sw {
+			logger.WithFields(logrus.Fields{
+				"until":      time.Now().Add(resetAfterDuration),
+				"resetAfter": resetAfterDuration,
+			}).Warn("Global reached, locking")
+		}
+	}
+
 	if err != nil {
 		item.errChan <- err
 		return
@@ -308,18 +328,6 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 			ch.Unlock()
 		} else {
 			ch.ratelimit.Update(remaining, limit, resetAt, resetAfter)
-		}
-	}
-
-	// FIXME: Properly implement this like in hikari
-	if scope == "global" {
-		//Lock global
-		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, int64(resetAt))
-		if sw {
-			logger.WithFields(logrus.Fields{
-				"until":      int64(resetAt),
-				"resetAfter": resetAfter,
-			}).Warn("Global reached, locking")
 		}
 	}
 
@@ -376,6 +384,10 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		if atomic.LoadInt64(q.isTokenInvalid) > 0 {
 			return401(item)
 			continue
+		}
+
+		if globalLockedUntil := atomic.LoadInt64(q.globalLockedUntil); globalLockedUntil > 0 {
+			time.Sleep(time.Duration(globalLockedUntil))
 		}
 
 		if ch.lockerFun != nil {
