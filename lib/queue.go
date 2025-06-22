@@ -389,17 +389,18 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 				item.errChan <- err
 				continue
 			}
+		}
 
-			go item.doRequest(ctx, q, ch, path, pathHash)
-
-		} else {
-			// We don't have the initial headers, so we do the requests sequentially, which should
-			// create and populate the bucket when it's known.
-			// If this is a route with no ratelimits, then we will simply execute them all sequentially,
-			// which should be fine
-			//
-			// TODO: Consider if its worth hard coding which routes will never have a bucket
+		// We don't have the initial headers, so we do the requests sequentially, which should
+		// create and populate the bucket when it's known, of it thats what the user wants
+		// If this is a route with no ratelimits, then we will simply execute them all sequentially,
+		// which should be fine
+		//
+		// TODO: Consider if its worth hard coding which routes will never have a bucket
+		if ch.ratelimit == nil || disableRestLimitDetection {
 			item.doRequest(ctx, q, ch, path, pathHash)
+		} else {
+			go item.doRequest(ctx, q, ch, path, pathHash)
 		}
 	}
 }

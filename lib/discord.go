@@ -22,6 +22,7 @@ var contextTimeout time.Duration
 var globalOverrideMap = make(map[string]uint)
 
 var disableRestLimitDetection = false
+var allowConcurrentRequests = false
 
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
@@ -110,7 +111,7 @@ func parseGlobalOverrides(overrides string) {
 	}
 }
 
-func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool, globalOverrides string, disableRestDetection bool) {
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, globalOverrides string, disableHttp2, disableRestDetection, allowConcurrent bool) {
 	transport := createTransport(ip, disableHttp2)
 	client = &http.Client{
 		Transport: transport,
@@ -120,6 +121,7 @@ func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 b
 	contextTimeout = timeout
 
 	disableRestLimitDetection = disableRestDetection
+	allowConcurrentRequests = allowConcurrent
 
 	parseGlobalOverrides(globalOverrides)
 }

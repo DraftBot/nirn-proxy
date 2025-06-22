@@ -103,7 +103,6 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 			// FIXME: This doesn't work and idk why
 			select {
 			case <-ctx.Done():
-				logger.Info("context cancelled")
 				return ctx.Err()
 			case <-time.After(sleepDuration):
 			}
@@ -161,6 +160,10 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 
 		b.outOfSync = false
 		b.period = slidePeriod
-		b.increaseAt = increaseAt
+
+		if increaseAt.After(b.increaseAt) {
+			// We only want to change this if we are lacking behind, as that can lead to 429s
+			b.increaseAt = increaseAt
+		}
 	}
 }
