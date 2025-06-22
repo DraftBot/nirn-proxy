@@ -104,7 +104,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 				"path":          b.path,
 				"user":          b.userID,
 				"sleepDuration": sleepDuration,
-			}).Info("backing off to avoid hitting ratelimits")
+			}).Debug("backing off to avoid hitting ratelimits")
 
 			select {
 			case <-ctx.Done():
