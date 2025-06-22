@@ -64,6 +64,9 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	// The second part of this 'if' is to account for some cases where there can be a race
 	// condition and we receive rate limit updates out of order, and we cannot update `outOfSync`
 	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
+		if b.outOfSync && now.Sub(b.increaseAt) > b.period {
+			logrus.Info("healing")
+		}
 		// We can slide the window along
 		gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
 		nowRemaining := b.remaining + gain
@@ -101,7 +104,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 				"path":          b.path,
 				"user":          b.userID,
 				"sleepDuration": sleepDuration,
-			}).Debug("backing off to avoid hitting ratelimits")
+			}).Info("backing off to avoid hitting ratelimits")
 
 			select {
 			case <-ctx.Done():
@@ -123,13 +126,13 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 
 	slidePeriod, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
 
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
 	if increaseAt.Before(b.increaseAt) {
 		// Old ratelimit information, ignore
 		return
 	}
-
-	b.lock.Lock()
-	defer b.lock.Unlock()
 
 	if b.limit != limit {
 		if b.limit > limit {
