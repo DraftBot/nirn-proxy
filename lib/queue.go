@@ -219,7 +219,7 @@ func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64,
 		scope = "route"
 	}
 
-	if resetAfter == "" || (scope == "global" && retryAfter != "") {
+	if resetAfter == "" || (scope != "user" && retryAfter != "") {
 		// Globals return no x-ratelimit-reset-after headers, shared ratelimits have a wrong reset-after
 		// this is the best option without parsing the body
 		resetAfter = headers.Get("retry-after")
@@ -227,9 +227,12 @@ func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64,
 
 	var err error
 
-	resetAfterParsed, err := strconv.ParseFloat(resetAfter, 64)
-	if err != nil {
-		return "", 0, 0, 0, 0, "", err
+	var resetAfterParsed float64 = 0
+	if resetAfter == "" {
+		resetAfterParsed, err = strconv.ParseFloat(resetAfter, 64)
+		if err != nil {
+			return "", 0, 0, 0, 0, "", err
+		}
 	}
 
 	if scope == "global" {
