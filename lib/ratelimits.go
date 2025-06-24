@@ -143,6 +143,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 		}
 
 		b.limit = limit
+		b.remaining = min(b.remaining, b.limit)
 	}
 
 	// We want to update the slide period only, and only if:
