@@ -240,7 +240,7 @@ func parseHeaders(path string, headers *http.Header) (string, int64, int64, floa
 	var err error
 
 	var resetAfterParsed float64 = 0
-	if resetAfter == "" {
+	if resetAfter != "" {
 		resetAfterParsed, err = strconv.ParseFloat(resetAfter, 64)
 		if err != nil {
 			return "", 0, 0, 0, 0, "", err
