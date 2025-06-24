@@ -27,7 +27,7 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 
 // BucketRateLimit is a sliding window ratelimit implementation
 type BucketRateLimit struct {
-	userID     string
+	identifier string
 	path       string
 	bucket     string
 	lock       sync.Mutex
@@ -38,7 +38,7 @@ type BucketRateLimit struct {
 	outOfSync  bool
 }
 
-func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, userID string) *BucketRateLimit {
+func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string) *BucketRateLimit {
 	if remaining == limit {
 		// If we somehow get this case, then we cannot create a ratelimit from the info
 		return nil
@@ -49,7 +49,7 @@ func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, buc
 	return &BucketRateLimit{
 		bucket:     bucket,
 		path:       path,
-		userID:     userID,
+		identifier: identifier,
 		remaining:  remaining,
 		limit:      limit,
 		period:     slidePeriod,
@@ -99,7 +99,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 			logger.WithFields(logrus.Fields{
 				"bucket":        b.bucket,
 				"path":          b.path,
-				"user":          b.userID,
+				"identifier":    b.identifier,
 				"sleepDuration": sleepDuration,
 			}).Debug("backing off to avoid hitting ratelimits")
 
@@ -134,11 +134,11 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 	if b.limit != limit {
 		if b.limit > limit {
 			logger.WithFields(logrus.Fields{
-				"bucket":   b.bucket,
-				"path":     b.path,
-				"user":     b.userID,
-				"newLimit": limit,
-				"oldLimit": b.limit,
+				"bucket":     b.bucket,
+				"path":       b.path,
+				"identifier": b.identifier,
+				"newLimit":   limit,
+				"oldLimit":   b.limit,
 			}).Warn("Bucket decreased its limit. It is possible you will see a small increase in 429s")
 		}
 
@@ -156,7 +156,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 			logger.WithFields(logrus.Fields{
 				"bucket":         b.bucket,
 				"path":           b.path,
-				"user":           b.userID,
+				"identifier":     b.identifier,
 				"newSlidePeriod": slidePeriod,
 				"oldSlidePeriod": b.period,
 			}).Warn("Bucket greatly increased its slide period. It is possible you will see a small increase in 429s")
