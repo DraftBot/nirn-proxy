@@ -214,7 +214,7 @@ func parseHeaders(path string, headers *http.Header) (string, int64, int64, floa
 	resetAt := headers.Get("x-ratelimit-reset")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
 	retryAfter := headers.Get("retry-after")
-	scope := headers.Get("x-ratelimit-global")
+	scope := headers.Get("x-ratelimit-scope")
 
 	if scope == "" {
 		scope = "route"
@@ -347,8 +347,8 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 			"scope":      scope,
 			"pathHash":   pathHash,
 			// TODO: Remove this when 429s are not a problem anymore
-			"discordBucket":  resp.Header.Get("x-ratelimit-bucket"),
-			"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
+			"discordBucket":  bucket,
+			"ratelimitScope": scope,
 		}).Warn("Unexpected 429")
 	}
 
