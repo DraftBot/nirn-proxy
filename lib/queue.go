@@ -216,17 +216,6 @@ func parseHeaders(path string, headers *http.Header) (string, int64, int64, floa
 	retryAfter := headers.Get("retry-after")
 	scope := headers.Get("x-ratelimit-global")
 
-	logger.WithFields(logrus.Fields{
-		"path":       path,
-		"bucket":     bucket,
-		"limit":      limit,
-		"remaining":  remaining,
-		"resetAt":    resetAt,
-		"resetAfter": resetAfter,
-		"retryAfter": retryAfter,
-		"scope":      scope,
-	}).Info("Parsed headers")
-
 	if scope == "" {
 		scope = "route"
 	}
