@@ -203,7 +203,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	return ch
 }
 
-func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64, string, error) {
+func parseHeaders(path string, headers *http.Header) (string, int64, int64, float64, float64, string, error) {
 	if headers == nil {
 		return "", 0, 0, 0, 0, "", errors.New("null headers")
 	}
@@ -215,6 +215,18 @@ func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64,
 	resetAfter := headers.Get("x-ratelimit-reset-after")
 	retryAfter := headers.Get("retry-after")
 	scope := headers.Get("x-ratelimit-global")
+
+	logger.WithFields(logrus.Fields{
+		"path":       path,
+		"bucket":     bucket,
+		"limit":      limit,
+		"remaining":  remaining,
+		"resetAt":    resetAt,
+		"resetAfter": resetAfter,
+		"retryAfter": retryAfter,
+		"scope":      scope,
+	}).Info("Parsed headers")
+
 	if scope == "" {
 		scope = "route"
 	}
@@ -302,7 +314,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		return
 	}
 
-	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
+	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(path, &resp.Header)
 
 	if scope == "global" {
 		// Lock global
