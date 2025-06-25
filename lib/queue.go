@@ -203,7 +203,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	return ch
 }
 
-func parseHeaders(path string, headers *http.Header) (string, int64, int64, float64, float64, string, error) {
+func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64, string, error) {
 	if headers == nil {
 		return "", 0, 0, 0, 0, "", errors.New("null headers")
 	}
@@ -303,7 +303,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		return
 	}
 
-	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(path, &resp.Header)
+	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
 
 	if scope == "global" {
 		// Lock global
