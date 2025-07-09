@@ -160,7 +160,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 				"identifier":     b.identifier,
 				"newSlidePeriod": slidePeriod,
 				"oldSlidePeriod": b.period,
-			}).Warn("Bucket greatly increased its slide period. It is possible you will see a small increase in 429s")
+			}).Warn("Bucket greatly changed its slide period. It is possible you will see a small increase in 429s")
 		}
 
 		b.outOfSync = false
