@@ -150,8 +150,10 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 	//   1. The bucket is out of sync (ie, we reset the full window)
 	//   2. We receive the first usage of the bucket, which will always have the most accurate slide period
 	//   3. The slide period increased
-	if b.outOfSync || remaining == limit-1 || slidePeriod > b.period {
-		if !isClose(slidePeriod, b.period, 0.3) {
+	//   4. The slide period greatly changed
+	//      Note: 0.3 and 0.5 are chosen arbitrarily after some testing
+	if b.outOfSync || remaining == limit-1 || slidePeriod > b.period || !isClose(slidePeriod, b.period, 0.3) {
+		if !isClose(slidePeriod, b.period, 0.5) {
 			logger.WithFields(logrus.Fields{
 				"bucket":         b.bucket,
 				"path":           b.path,
