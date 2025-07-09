@@ -15,7 +15,7 @@ func isClose(a, b time.Duration, absTol float64) bool {
 
 func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64) (time.Duration, time.Time) {
 	// slidePeriod = resetAfter / (limit - remaining)
-	slidePeriod := time.Duration((resetAfter/float64(limit-remaining))*1_000) * time.Millisecond
+	slidePeriod := time.Duration(math.Ceil((resetAfter/float64(limit-remaining))*1_000)) * time.Millisecond
 
 	// increaseAt = (resetAt - resetAfter) + slidePeriod
 	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
@@ -149,11 +149,9 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 	// We want to update the slide period only, and only if:
 	//   1. The bucket is out of sync (ie, we reset the full window)
 	//   2. We receive the first usage of the bucket, which will always have the most accurate slide period
-	//   3. The slide periods differ too much. This is helpful if we diverged too much from the real one
-	//      due to network latency, of if the bucket randomly changed
-	//      Note: 0.5 and 0.7 are chosen arbitrarily after some testing
-	if b.outOfSync || remaining == limit-1 || !isClose(slidePeriod, b.period, 0.5) {
-		if !isClose(slidePeriod, b.period, 0.7) {
+	//   3. The slide period increased
+	if b.outOfSync || remaining == limit-1 || slidePeriod > b.period {
+		if !isClose(slidePeriod, b.period, 0.3) {
 			logger.WithFields(logrus.Fields{
 				"bucket":         b.bucket,
 				"path":           b.path,
