@@ -27,18 +27,19 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 
 // BucketRateLimit is a sliding window ratelimit implementation
 type BucketRateLimit struct {
-	identifier string
-	path       string
-	bucket     string
-	lock       sync.Mutex
-	remaining  int64
-	limit      int64
-	period     time.Duration
-	increaseAt time.Time
-	outOfSync  bool
+	identifier  string
+	path        string
+	bucket      string
+	lock        sync.Mutex
+	remaining   int64
+	limit       int64
+	period      time.Duration
+	increaseAt  time.Time
+	outOfSync   bool
+	fixedWindow bool
 }
 
-func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string) *BucketRateLimit {
+func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string, fixedWindow bool) *BucketRateLimit {
 	if remaining == limit {
 		// If we somehow get this case, then we cannot create a ratelimit from the info
 		return nil
@@ -47,13 +48,14 @@ func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, buc
 	slidePeriod, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
 
 	return &BucketRateLimit{
-		bucket:     bucket,
-		path:       path,
-		identifier: identifier,
-		remaining:  remaining,
-		limit:      limit,
-		period:     slidePeriod,
-		increaseAt: increaseAt,
+		bucket:      bucket,
+		path:        path,
+		identifier:  identifier,
+		remaining:   remaining,
+		limit:       limit,
+		period:      slidePeriod,
+		increaseAt:  increaseAt,
+		fixedWindow: fixedWindow,
 	}
 }
 
@@ -64,19 +66,27 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	// The second part of this 'if' is to account for some cases where there can be a race
 	// condition and we receive rate limit updates out of order, and we cannot update `outOfSync`
 	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
-		// We can slide the window along
-		gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
-		nowRemaining := b.remaining + gain
-
-		b.remaining = min(nowRemaining, b.limit)
-
-		if b.remaining == b.limit {
-			// When a ratelimit resets, we will fall out of sync from the remote, so
-			// we want to prevent future sliding
-			b.increaseAt = now.Add(b.period)
+		if b.fixedWindow {
+			// Fixed windows just reset the remaining back to the limit
+			b.remaining = b.limit
 			b.outOfSync = true
+			b.increaseAt = now.Add(b.period)
+
 		} else {
-			b.increaseAt = b.increaseAt.Add(b.period * time.Duration(gain))
+			// We can slide the window along
+			gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
+			nowRemaining := b.remaining + gain
+
+			b.remaining = min(nowRemaining, b.limit)
+
+			if b.remaining == b.limit {
+				// When a ratelimit resets, we will fall out of sync from the remote, so
+				// we want to prevent future sliding
+				b.increaseAt = now.Add(b.period)
+				b.outOfSync = true
+			} else {
+				b.increaseAt = b.increaseAt.Add(b.period * time.Duration(gain))
+			}
 		}
 	}
 
