@@ -105,10 +105,10 @@ func GetOptimisticBucketPath(url string, method string) string {
 		bucket.WriteString("/!")
 		currMajor = MajorInvites
 	case MajorGuilds:
-		// guilds/:guildId/channels share the same bucket for all guilds
-		if numParts == 3 && parts[2] == "channels" {
-			return "/" + MajorGuilds + "/!/channels"
-		}
+		// commented because guilds/:guildId/channels DONT share the same bucket for all guilds
+		// if numParts == 3 && parts[2] == "channels" {
+		// 	return "/" + MajorGuilds + "/!/channels"
+		// }
 		fallthrough
 	case MajorInteractions:
 		if numParts == 4 && parts[3] == "callback" {
