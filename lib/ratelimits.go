@@ -2,10 +2,11 @@ package lib
 
 import (
 	"context"
-	"github.com/sirupsen/logrus"
 	"math"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // isClose checks if two durations are within `diff` seconds of difference
@@ -35,11 +36,12 @@ type BucketRateLimit struct {
 	limit       int64
 	period      time.Duration
 	increaseAt  time.Time
+	resetAt     time.Time
 	outOfSync   bool
 	fixedWindow bool
 }
 
-func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string, fixedWindow bool) *BucketRateLimit {
+func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string) *BucketRateLimit {
 	if remaining == limit {
 		// If we somehow get this case, then we cannot create a ratelimit from the info
 		return nil
@@ -52,10 +54,11 @@ func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, buc
 		path:        path,
 		identifier:  identifier,
 		remaining:   remaining,
+		resetAt:     time.Unix(0, int64(resetAt*1_000_000_000)),
 		limit:       limit,
 		period:      slidePeriod,
 		increaseAt:  increaseAt,
-		fixedWindow: fixedWindow,
+		fixedWindow: false,
 	}
 }
 
@@ -135,6 +138,16 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
+
+	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
+
+	if b.resetAt.Equal(resetAtTime) {
+		// We cannot unfortunately detect these properly yet, so we need to do this hacky thing
+		// https://github.com/discord/discord-api-docs/issues/7680
+		b.fixedWindow = true
+	} else if resetAtTime.After(b.resetAt) {
+		b.resetAt = resetAtTime
+	}
 
 	if increaseAt.Before(b.increaseAt) {
 		// Old ratelimit information, ignore

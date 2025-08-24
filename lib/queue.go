@@ -329,13 +329,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		if ch.ratelimit == nil {
 			ch.Lock()
 			if ch.ratelimit == nil {
-				// This is insanely unfortunate, but this specific route has fixed window instead of a sliding one
-				fixedWindow := false
-				if strings.HasSuffix(path, "/members/!/roles/!") {
-					fixedWindow = true
-				}
-
-				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, bucket, path, q.identifier, fixedWindow)
+				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, bucket, path, q.identifier)
 			}
 			ch.Unlock()
 		} else {
