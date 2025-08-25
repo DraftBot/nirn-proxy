@@ -10,8 +10,8 @@ import (
 )
 
 // isClose checks if two durations are within `diff` seconds of difference
-func isClose(a, b time.Duration, absTol float64) bool {
-	return math.Abs(a.Seconds()-b.Seconds()) <= absTol
+func isClose(a, b float64, absTol float64) bool {
+	return math.Abs(a-b) <= absTol
 }
 
 func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64) (time.Duration, time.Time) {
@@ -36,7 +36,7 @@ type BucketRateLimit struct {
 	limit       int64
 	period      time.Duration
 	increaseAt  time.Time
-	resetAt     time.Time
+	resetAt     float64
 	outOfSync   bool
 	fixedWindow bool
 }
@@ -54,7 +54,7 @@ func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, buc
 		path:        path,
 		identifier:  identifier,
 		remaining:   remaining,
-		resetAt:     time.Unix(0, int64(resetAt*1_000_000_000)),
+		resetAt:     resetAt,
 		limit:       limit,
 		period:      slidePeriod,
 		increaseAt:  increaseAt,
@@ -134,23 +134,46 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 		return
 	}
 
-	slidePeriod, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
-
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
-
-	if b.resetAt.Equal(resetAtTime) {
-		// We cannot unfortunately detect these properly yet, so we need to do this hacky thing
-		// https://github.com/discord/discord-api-docs/issues/7680
-		b.fixedWindow = true
-	} else if resetAtTime.After(b.resetAt) {
-		b.resetAt = resetAtTime
+	if resetAt < b.resetAt {
+		// Old ratelimit information, ignore
+		return
 	}
 
-	if increaseAt.Before(b.increaseAt) {
-		// Old ratelimit information, ignore
+	if !b.outOfSync {
+		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
+
+		if !b.fixedWindow && resetAtEq {
+			logger.WithFields(logrus.Fields{
+				"bucket":          b.bucket,
+				"path":            b.path,
+				"identifier":      b.identifier,
+				"storedResetAt":   b.resetAt,
+				"receivedResetAt": resetAt,
+			}).Debug("Bucket detected to be a fixed bucket bucket")
+			b.fixedWindow = true
+			b.increaseAt = time.Unix(0, int64(resetAt*1_000_000_000))
+
+		} else if !b.fixedWindow && resetAtEq {
+			logger.WithFields(logrus.Fields{
+				"bucket":          b.bucket,
+				"path":            b.path,
+				"identifier":      b.identifier,
+				"storedResetAt":   b.resetAt,
+				"receivedResetAt": resetAt,
+			}).Debug("Bucket stopped being a fixed bucket")
+			b.fixedWindow = false
+			// Setting this here will have an effect bellow
+			b.outOfSync = true
+		}
+	}
+
+	b.resetAt = resetAt
+
+	if b.fixedWindow {
+		b.outOfSync = false
 		return
 	}
 
@@ -175,8 +198,9 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 	//   3. The slide period increased
 	//   4. The slide period greatly changed
 	//      Note: 0.3 and 0.5 are chosen arbitrarily after some testing
-	if b.outOfSync || remaining == limit-1 || slidePeriod > b.period || !isClose(slidePeriod, b.period, 0.3) {
-		if !isClose(slidePeriod, b.period, 0.5) {
+	slidePeriod, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+	if b.outOfSync || remaining == limit-1 || slidePeriod > b.period || !isClose(slidePeriod.Seconds(), b.period.Seconds(), 0.3) {
+		if !isClose(slidePeriod.Seconds(), b.period.Seconds(), 0.5) {
 			logger.WithFields(logrus.Fields{
 				"bucket":         b.bucket,
 				"path":           b.path,
