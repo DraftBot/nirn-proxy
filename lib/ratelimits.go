@@ -165,7 +165,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 				"receivedResetAt": resetAt,
 			}).Debug("Bucket stopped being a fixed bucket")
 			b.fixedWindow = false
-			// Setting this here will have an effect bellow
+			// Setting this here will have an effect below
 			b.outOfSync = true
 		}
 	}
