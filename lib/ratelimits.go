@@ -184,7 +184,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Info("Bucket detected to be a fixed bucket bucket")
+			}).Debug("Bucket detected to be a fixed bucket bucket")
 			b.fixedWindow = true
 			// Setting this here will have an effect below
 			b.outOfSync = true
@@ -196,7 +196,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Info("Bucket stopped being a fixed bucket")
+			}).Debug("Bucket stopped being a fixed bucket")
 			b.fixedWindow = false
 			// Setting this here will have an effect below
 			b.outOfSync = true
