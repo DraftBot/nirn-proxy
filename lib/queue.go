@@ -3,9 +3,6 @@ package lib
 import (
 	"context"
 	"errors"
-	"github.com/Clever/leakybucket"
-	"github.com/Clever/leakybucket/memory"
-	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strconv"
@@ -13,6 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Clever/leakybucket"
+	"github.com/Clever/leakybucket/memory"
+	"github.com/sirupsen/logrus"
 )
 
 type QueueItem struct {
@@ -297,6 +298,10 @@ func isInteraction(url string) bool {
 }
 
 func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *QueueChannel, path string, pathHash uint64) {
+	if ch.ratelimit != nil {
+		defer ch.ratelimit.Release()
+	}
+
 	resp, err := q.processor(ctx, item)
 	if err != nil {
 		item.errChan <- err

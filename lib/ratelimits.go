@@ -14,6 +14,13 @@ func isClose(a, b float64, absTol float64) bool {
 	return math.Abs(a-b) <= absTol
 }
 
+func calculateFixedWindow(resetAt, resetAfter float64) (time.Duration, time.Time) {
+	increaseAt := time.Unix(0, int64(resetAt*1_000_000_000))
+	period := time.Duration(resetAfter*1_000) * time.Millisecond
+
+	return period, increaseAt
+}
+
 func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64) (time.Duration, time.Time) {
 	// slidePeriod = resetAfter / (limit - remaining)
 	slidePeriod := time.Duration(math.Ceil((resetAfter/float64(limit-remaining))*1_000)) * time.Millisecond
@@ -39,15 +46,14 @@ type BucketRateLimit struct {
 	resetAt     float64
 	outOfSync   bool
 	fixedWindow bool
+
+	inTransitLock   sync.Mutex
+	inTransit       int64
+	transitWaitChan chan interface{}
 }
 
 func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string) *BucketRateLimit {
-	if remaining == limit {
-		// If we somehow get this case, then we cannot create a ratelimit from the info
-		return nil
-	}
-
-	slidePeriod, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+	period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
 
 	return &BucketRateLimit{
 		bucket:      bucket,
@@ -56,7 +62,7 @@ func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, buc
 		remaining:   remaining,
 		resetAt:     resetAt,
 		limit:       limit,
-		period:      slidePeriod,
+		period:      period,
 		increaseAt:  increaseAt,
 		fixedWindow: false,
 	}
@@ -68,7 +74,7 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	// network latency.
 	// The second part of this 'if' is to account for some cases where there can be a race
 	// condition and we receive rate limit updates out of order, and we cannot update `outOfSync`
-	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
+	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
 		if b.fixedWindow {
 			// Fixed windows just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -98,6 +104,23 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 
 // Acquire will request a slot from the ratelimit and sleep until there is one available
 func (b *BucketRateLimit) Acquire(ctx context.Context) error {
+	b.inTransitLock.Lock()
+	if b.inTransit >= b.limit {
+		b.transitWaitChan = make(chan interface{})
+		b.inTransitLock.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-b.transitWaitChan:
+		}
+		// We dont update inTransit because the
+		// slot was given to us by the goroutine
+		// that sent the message through transitWaitChan
+	} else {
+		b.inTransit++
+		b.inTransitLock.Unlock()
+	}
+
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -128,12 +151,21 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 	return nil
 }
 
-func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter float64) {
-	if remaining == limit {
-		// This should never happen, but just in case
-		return
-	}
+func (b *BucketRateLimit) Release() {
+	b.inTransitLock.Lock()
+	b.inTransitLock.Unlock()
 
+	if b.transitWaitChan != nil && b.inTransit <= b.limit {
+		// We dont update inTransit here as we are giving
+		// our slot to the one that is waiting
+		b.transitWaitChan <- nil
+		b.transitWaitChan = nil
+	} else {
+		b.inTransit--
+	}
+}
+
+func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter float64) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -152,9 +184,10 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket detected to be a fixed bucket bucket")
+			}).Info("Bucket detected to be a fixed bucket bucket")
 			b.fixedWindow = true
-			b.increaseAt = time.Unix(0, int64(resetAt*1_000_000_000))
+			// Setting this here will have an effect below
+			b.outOfSync = true
 
 		} else if !b.fixedWindow && resetAtEq {
 			logger.WithFields(logrus.Fields{
@@ -163,7 +196,7 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket stopped being a fixed bucket")
+			}).Info("Bucket stopped being a fixed bucket")
 			b.fixedWindow = false
 			// Setting this here will have an effect below
 			b.outOfSync = true
@@ -171,11 +204,6 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 	}
 
 	b.resetAt = resetAt
-
-	if b.fixedWindow {
-		b.outOfSync = false
-		return
-	}
 
 	if b.limit != limit {
 		if b.limit > limit {
@@ -190,6 +218,20 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 
 		b.limit = limit
 		b.remaining = min(b.remaining, b.limit)
+	}
+
+	if b.fixedWindow {
+		// We want to update the period only, and only if:
+		//   1. The bucket is out of sync (ie, we reset the full window)
+		//   2. We receive the first usage of the bucket, which will always have correct period
+		if b.outOfSync || remaining == limit-1 {
+			period, increaseAt := calculateFixedWindow(b.resetAt, resetAfter)
+			b.period = period
+			b.increaseAt = increaseAt
+
+			b.outOfSync = false
+		}
+		return
 	}
 
 	// We want to update the slide period only, and only if:
