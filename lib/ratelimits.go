@@ -74,7 +74,7 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	// network latency.
 	// The second part of this 'if' is to account for some cases where there can be a race
 	// condition and we receive rate limit updates out of order, and we cannot update `outOfSync`
-	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
+	if now.After(b.increaseAt) || now.Equal(b.increaseAt) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
 		if b.fixedWindow {
 			// Fixed windows just reset the remaining back to the limit
 			b.remaining = b.limit
