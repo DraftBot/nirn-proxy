@@ -165,7 +165,7 @@ func (b *BucketRateLimit) Release() {
 	}
 }
 
-func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter float64) {
+func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt, resetAfter float64) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -173,6 +173,8 @@ func (b *BucketRateLimit) Update(remaining, limit int64, resetAt, resetAfter flo
 		// Old ratelimit information, ignore
 		return
 	}
+
+	b.bucket = bucket
 
 	if !b.outOfSync {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)

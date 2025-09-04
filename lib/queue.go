@@ -338,7 +338,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 			}
 			ch.Unlock()
 		} else {
-			ch.ratelimit.Update(remaining, limit, resetAt, resetAfter)
+			ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter)
 		}
 	}
 
