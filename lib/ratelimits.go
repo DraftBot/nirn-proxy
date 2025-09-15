@@ -35,21 +35,22 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 
 // BucketRateLimit is a sliding window ratelimit implementation
 type BucketRateLimit struct {
-	identifier  string
-	path        string
-	bucket      string
-	lock        sync.Mutex
-	remaining   int64
-	limit       int64
-	period      time.Duration
-	increaseAt  time.Time
-	resetAt     float64
-	outOfSync   bool
-	fixedWindow bool
+	identifier string
+	path       string
+	bucket     string
+	lock       sync.Mutex
+	remaining  int64
+	limit      int64
+	period     time.Duration
+	increaseAt time.Time
+	resetAt    float64
 
 	inTransitLock   sync.Mutex
 	inTransit       int64
 	transitWaitChan chan interface{}
+
+	outOfSync   bool
+	fixedWindow bool
 }
 
 func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string) *BucketRateLimit {
